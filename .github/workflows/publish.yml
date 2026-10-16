@@ -1,0 +1,53 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version already set in package.json
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      EXPECTED_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Require the reviewed main branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Publishing must run from main."
+            exit 1
+          fi
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
+      - name: Use an OIDC-capable npm version
+        run: npm install --global npm@11.19.0 --ignore-scripts --registry=https://registry.npmjs.org/
+      - run: npm ci --ignore-scripts --registry=https://registry.npmjs.org/
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - name: Build and install-check the release artifact
+        run: npm run package:check -- --expected-version "$EXPECTED_VERSION"
+      - name: Verify and publish the exact checked tarball
+        run: |
+          npm run package:check -- --verify-only --expected-version "$EXPECTED_VERSION"
+          artifact="$(node -p "require('./.artifacts/result.json').filename")"
+          npm publish ".artifacts/$artifact" --ignore-scripts --access public --registry=https://registry.npmjs.org/
