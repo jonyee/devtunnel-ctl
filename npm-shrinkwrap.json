@@ -1,12 +1,17 @@
 {
-  "name": "devtunnel-ctl",
+  "name": "@jonathanyee/devtunnel-ctl",
   "version": "0.1.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
-      "name": "devtunnel-ctl",
+      "name": "@jonathanyee/devtunnel-ctl",
       "version": "0.1.0",
+      "license": "MIT",
+      "os": [
+        "darwin",
+        "linux"
+      ],
       "dependencies": {
         "@microsoft/dev-tunnels-connections": "1.3.61",
         "@microsoft/dev-tunnels-contracts": "1.3.61",

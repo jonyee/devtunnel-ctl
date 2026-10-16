@@ -4,9 +4,33 @@ A per-user background service and CLI for **SSH-only** Microsoft Dev Tunnels for
 
 This is a first version, not a transparent SSH-session migration tool. A fresh SDK client can terminate existing SSH sessions. Use `tmux` on the remote machine when session continuity matters. No remote settings or SSH configuration are modified.
 
-## Build and run
+## Installation
 
-Requires Node.js 24 or later, npm, and an installed Microsoft `devtunnel` CLI. On macOS/Homebrew the default helper is `/opt/homebrew/bin/devtunnel`.
+Requires Node.js 24 or later, npm, macOS or Linux, and an installed Microsoft `devtunnel` CLI. The authentication helper is not bundled. On macOS/Homebrew its default path is `/opt/homebrew/bin/devtunnel`; on Linux pass its actual absolute path to `init --helper`. The local daemon does not support Windows, but can connect to remote SSH endpoints running inside WSL.
+
+### From npm
+
+After the first npm release:
+
+```sh
+npm install --global --ignore-scripts @jonathanyee/devtunnel-ctl
+devtunnel-ctl --help
+devtunnel-ctl init --helper /opt/homebrew/bin/devtunnel
+devtunnel-ctl daemon
+```
+
+The package ships compiled JavaScript and a publishable dependency lock, so consumers do not need TypeScript or a source checkout. It works with dependency installation scripts disabled.
+
+For a read-only global prefix, such as a Nix-managed Node installation, use a user-owned prefix instead of `sudo`:
+
+```sh
+npm install --global --prefix "$HOME/.local" --ignore-scripts @jonathanyee/devtunnel-ctl
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Keep that bin directory on your shell's PATH. Switching an existing launchd service from a checkout to an npm installation changes its entrypoint: stop/uninstall the old service, then install/start it using the new command. Restart a daemon after package updates; reinstall its service if pinned runtime/helper paths change.
+
+### From source
 
 ```sh
 npm ci --ignore-scripts
@@ -27,7 +51,14 @@ ssh -p 23022 remote-user@127.0.0.1
 
 The names, tunnel ID and port above are fictitious examples. Choose an existing tunnel and an **unused** local port for initial verification. Do not stop or replace working forwards until you deliberately migrate them.
 
-Optionally run `npm link --ignore-scripts` after building to make `devtunnel-ctl` available as a command. Otherwise use `node /absolute/path/to/devtunnel-ctl/dist/main.js` throughout.
+To expose the checkout as a command after building:
+
+```sh
+npm install --global --prefix "$HOME/.local" --ignore-scripts "$PWD"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+This local installation remains tied to the checkout. Otherwise use `node /absolute/path/to/devtunnel-ctl/dist/main.js` throughout.
 
 ## Profiles and commands
 
@@ -179,3 +210,73 @@ npm test
 ```
 
 Tests use Node's built-in runner and type stripping. They cover private configuration and helper handling, actual dual-loopback binds/conflicts, forwarding backpressure and half-close, queued-write draining after remote EOF, abrupt remote closure, SSH banners, fake-clock recovery/deadlines/long gaps, stale async completions, authentication/endpoint refresh, redaction/rotation, malformed and oversized IPC, concurrent daemon locking, and real CLI/daemon subprocess restart flows. Large-response assertions compare byte counts and equality without rendering multi-megabyte buffer diffs. All verification daemons are isolated and shut down by their tests.
+
+## Package verification and publishing
+
+The npm package is `@jonathanyee/devtunnel-ctl`; the installed command remains `devtunnel-ctl`. The project is MIT-licensed; see [LICENSE](LICENSE).
+
+### Verify the actual artifact
+
+```sh
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+npm run package:check -- --expected-version 0.1.0
+npm run package:check -- --verify-only --expected-version 0.1.0
+```
+
+`prepack` builds the compiled files before every pack. The package checker:
+
+- Allows only `dist`, package metadata, README, license and `npm-shrinkwrap.json`; it rejects source, tests, scripts, workflows and unexpected files.
+- Installs the tarball into an isolated temporary global prefix, without development dependencies, credentials or installation scripts.
+- Runs the installed command outside the checkout, verifies its runtime dependencies are inside that prefix, and exercises an isolated daemon/status/paused-profile flow without connecting to real tunnels.
+- Stops that daemon and removes temporary installation/state directories.
+- Writes the checked tarball and `result.json` under ignored `.artifacts/`. The result includes SHA-512 integrity; `--verify-only` rejects incomplete reports or modified artifacts.
+
+The consumer installation is **offline** and uses the cache for your currently configured npm registry, including a locally configured mirror. Seed it with `npm ci` first. It never silently falls back to another registry or downloads dependencies during the smoke check. CI seeds a public-npm cache on its hosted runners. A successful local cached install is not proof that a fresh public-registry download works from the current network.
+
+The source lock is `npm-shrinkwrap.json`, not `package-lock.json`, because this is a globally installed application. It is included in the published tarball to preserve tested transitive versions and integrity hashes. Keep its tarball origins public; do not commit machine-specific npm configuration or authentication.
+
+Use a fresh output directory after changing versions, or remove only the prior generated artifacts yourself. The checker refuses unrelated files in its output directory.
+
+### First publication: owner-controlled bootstrap
+
+Preparation does **not** publish the package or reserve an npm name. Merge the reviewed packaging changes into `main` before the first release. npm trusted publishers are configured in an existing package's settings, so a new package may need its first publication performed interactively before that connection can be added.
+
+When ready, on a trusted machine with public npm access:
+
+```sh
+npm login --registry=https://registry.npmjs.org/
+npm whoami --registry=https://registry.npmjs.org/
+```
+
+Confirm the account is `jonathanyee`, with verified email and two-factor authentication. Check that the intended version has not already been published. Network/authentication errors are not evidence that a name or version is available.
+
+After running the artifact checks above, these commands perform the **actual first publication**:
+
+```sh
+artifact="$(node -p "require('./.artifacts/result.json').filename")"
+npm publish ".artifacts/$artifact" --ignore-scripts --access public --registry=https://registry.npmjs.org/
+```
+
+Do not paste tokens into chat or add them to the repository. The explicit registry and package `publishConfig` prevent relying on a machine's default publishing registry. If a publish result is uncertain, check npm before retrying; an existing version cannot be republished.
+
+### Subsequent publications: manual GitHub Actions with OIDC
+
+Before the next version is ready to publish:
+
+1. In this GitHub repository, configure the `npm` environment with required approval and restrict deployments to `main`.
+2. In npm package settings, add a GitHub Actions trusted publisher: GitHub owner **`jonyee`**, repository **`devtunnel-ctl`**, workflow **`publish.yml`**, environment **`npm`**. The GitHub owner and npm scope are different names.
+3. Configure publishing access to require two-factor authentication and disallow traditional tokens after verifying the trusted publisher works.
+
+A newly created trusted-publisher connection must complete its first successful publish within npm's validation window (currently two days); configure it when the next release is ready, or recreate an expired connection.
+
+For a new version, update both the manifest and shrinkwrap, review and merge the change:
+
+```sh
+npm version patch --no-git-tag-version
+```
+
+Then select **Actions → Publish npm → Run workflow**, choose `main`, and enter the exact version in `package.json`. The workflow rejects other branches or mismatched versions, runs all checks, install-tests a fresh tarball, verifies its integrity again, and publishes that exact tarball using OIDC. It uses GitHub-hosted runners, an OIDC-capable pinned npm, and no stored publishing token. npm generates provenance automatically for trusted publication from this public repository.
+
+There are no push/tag/release triggers for publication. Tags and GitHub Releases remain separate, explicit owner actions. Neither package verification nor CI checks register launchd, log in, or alter existing tunnels.

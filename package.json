@@ -1,15 +1,24 @@
 {
-  "name": "devtunnel-ctl",
+  "name": "@jonathanyee/devtunnel-ctl",
   "version": "0.1.0",
-  "private": true,
   "description": "Resilient SSH forwarding using the Microsoft Dev Tunnels SDK",
+  "license": "MIT",
+  "author": "jonyee",
+  "repository": { "type": "git", "url": "git+https://github.com/jonyee/devtunnel-ctl.git" },
+  "homepage": "https://github.com/jonyee/devtunnel-ctl#readme",
+  "bugs": { "url": "https://github.com/jonyee/devtunnel-ctl/issues" },
   "type": "module",
   "bin": { "devtunnel-ctl": "dist/main.js" },
+  "files": ["dist", "npm-shrinkwrap.json"],
   "engines": { "node": ">=24" },
+  "os": ["darwin", "linux"],
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "scripts": {
     "build": "tsc && chmod +x dist/main.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "prepack": "npm run build",
+    "package:check": "node scripts/package-check.ts"
   },
   "dependencies": {
     "@microsoft/dev-tunnels-connections": "1.3.61",
