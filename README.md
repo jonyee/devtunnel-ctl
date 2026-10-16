@@ -233,7 +233,7 @@ npm run package:check -- --verify-only --expected-version 0.1.0
 - Stops that daemon and removes temporary installation/state directories.
 - Writes the checked tarball and `result.json` under ignored `.artifacts/`. The result includes SHA-512 integrity; `--verify-only` rejects incomplete reports or modified artifacts.
 
-The consumer installation is **offline** and uses the cache for your currently configured npm registry, including a locally configured mirror. Seed it with `npm ci` first. It never silently falls back to another registry or downloads dependencies during the smoke check. CI seeds a public-npm cache on its hosted runners. A successful local cached install is not proof that a fresh public-registry download works from the current network.
+The consumer installation **prefers cached data**, but downloads missing metadata or dependencies from your currently configured npm registry, including a locally configured mirror. `npm ci` alone does not cache all metadata needed for a global install. The smoke check never silently falls back to another registry. The integration test uses an empty public-npm cache to cover fresh-runner installation. A successful local cached install is not proof that a fresh public-registry download works from the current network.
 
 The source lock is `npm-shrinkwrap.json`, not `package-lock.json`, because this is a globally installed application. It is included in the published tarball to preserve tested transitive versions and integrity hashes. Keep its tarball origins public; do not commit machine-specific npm configuration or authentication.
 

@@ -17,12 +17,14 @@ test('artifact consumer environment excludes publishing, cloud and SSH credentia
     PATH: '/bin', HOME: '/real-home', NPM_TOKEN: 'synthetic-secret', GITHUB_TOKEN: 'synthetic-secret',
     AZURE_CLIENT_SECRET: 'synthetic-secret', AWS_SESSION_TOKEN: 'synthetic-secret',
     SSH_AUTH_SOCK: '/private-agent', NODE_OPTIONS: '--require /private-module', NODE_PATH: '/private-modules',
+    NODE_EXTRA_CA_CERTS: '/trusted/ca.pem',
   }, { home: '/isolated/home', cache: '/package-cache', registry: 'https://registry.npmjs.org/', userconfig: '/isolated/npmrc', temporary: '/isolated/tmp' });
   assert.equal(env.HOME, '/isolated/home');
   assert.equal(env.NPM_CONFIG_USERCONFIG, '/isolated/npmrc');
   assert.equal(env.NPM_CONFIG_CACHE, '/package-cache');
   assert.equal(env.NODE_OPTIONS, '');
   assert.equal(env.NODE_PATH, '');
+  assert.equal(env.NODE_EXTRA_CA_CERTS, '/trusted/ca.pem');
   for (const key of ['NPM_TOKEN', 'GITHUB_TOKEN', 'AZURE_CLIENT_SECRET', 'AWS_SESSION_TOKEN', 'SSH_AUTH_SOCK']) {
     assert.equal(env[key], undefined);
   }
@@ -88,13 +90,18 @@ test('CI validates packages and publication is manual, main-only, versioned and 
   }
 });
 
-test('the actual packed CLI installs independently and detects subsequent artifact tampering', { timeout: 120000 }, async () => {
+test('the actual packed CLI installs independently from an empty cache and detects subsequent artifact tampering', { timeout: 120000 }, async () => {
   assert.equal(await exists('scripts/package-check.ts'), true, 'package checker must be available');
   const root = await mkdtemp(join(tmpdir(), 'dtcp-test-'));
   const output = join(root, 'artifacts');
   try {
     const result = await execute(process.execPath, ['scripts/package-check.ts', '--output', output], {
       timeout: 100000, maxBuffer: 1048576,
+      env: {
+        ...process.env,
+        NPM_CONFIG_CACHE: join(root, 'cache'), npm_config_cache: join(root, 'cache'),
+        NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/', npm_config_registry: 'https://registry.npmjs.org/',
+      },
     }).catch(error => {
       const detail = record(error) && typeof error.stderr === 'string' ? redact(error.stderr) : 'no sanitized stderr';
       assert.fail(`Packed installation check failed: ${detail}`);

@@ -21,6 +21,7 @@ export function verificationEnvironment(parent: NodeJS.ProcessEnv,
     PATH: dirname(process.execPath) + ':' + (parent.PATH ?? ''),
     HOME: paths.home, TMPDIR: paths.temporary, LANG: parent.LANG ?? 'C', CI: 'true',
     NODE_PATH: '', NODE_OPTIONS: '',
+    ...(parent.NODE_EXTRA_CA_CERTS ? { NODE_EXTRA_CA_CERTS: parent.NODE_EXTRA_CA_CERTS } : {}),
     NPM_CONFIG_USERCONFIG: paths.userconfig, npm_config_userconfig: paths.userconfig,
     NPM_CONFIG_CACHE: paths.cache, npm_config_cache: paths.cache,
     NPM_CONFIG_REGISTRY: paths.registry, npm_config_registry: paths.registry,
@@ -193,7 +194,7 @@ async function check(output: string, expected: string | undefined, verifyOnly: b
     : command('npm', ['config', 'get', 'cache'], root, process.env, signal))).trim();
   const cacheRegistry = new URL(configured);
   if (cacheRegistry.protocol !== 'https:' || cacheRegistry.username || cacheRegistry.password || cacheRegistry.search || cacheRegistry.hash) {
-    invalid('The offline install cache registry must use HTTPS without embedded credentials.');
+    invalid('The install registry must use HTTPS without embedded credentials.');
   }
   const filename = pkg.name.slice(1).replace('/', '-') + '-' + pkg.version + '.tgz';
   await mkdir(output, { recursive: true, mode: 0o700 });
@@ -223,7 +224,7 @@ async function check(output: string, expected: string | undefined, verifyOnly: b
     const hash = await integrity(tarball);
     if (hash !== raw[0].integrity) invalid('Packed tarball integrity does not match npm metadata.');
     const prefix = join(temporary, 'prefix');
-    await npm(['install', '--global', '--prefix', prefix, '--offline', '--omit=dev', '--ignore-scripts',
+    await npm(['install', '--global', '--prefix', prefix, '--prefer-offline', '--omit=dev', '--ignore-scripts',
       '--no-audit', '--no-fund', '--registry=' + cacheRegistry.href, tarball]);
     await consumer(prefix, temporary, env, signal, pkg);
     if (await integrity(tarball) !== hash) invalid('Artifact changed during verification.');
