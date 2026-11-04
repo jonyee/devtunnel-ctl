@@ -63,7 +63,7 @@ interface Report {
   filename: string;
   integrity: string;
   files: string[];
-  checks: { help: boolean; daemon: boolean; pausedProfile: boolean; dependencyIsolation: boolean };
+  checks: { help: boolean; daemon: boolean; pausedProfile: boolean; dependencyIsolation: boolean; hostWorker: boolean };
 }
 
 function inventory(files: string[]): void {
@@ -89,7 +89,7 @@ async function verifiedArtifact(output: string, pkg: { name: string; version: st
       typeof report.integrity !== 'string' || !Array.isArray(report.files) ||
       !report.files.every((path: unknown) => typeof path === 'string') || !record(report.checks) ||
       report.checks.help !== true || report.checks.daemon !== true ||
-      report.checks.pausedProfile !== true || report.checks.dependencyIsolation !== true) {
+      report.checks.pausedProfile !== true || report.checks.dependencyIsolation !== true || report.checks.hostWorker !== true) {
     invalid('Artifact report is missing, incomplete, or belongs to a different package/version.');
   }
   const files = report.files.filter((path): path is string => typeof path === 'string');
@@ -98,7 +98,7 @@ async function verifiedArtifact(output: string, pkg: { name: string; version: st
   return {
     name: pkg.name, version: pkg.version, filename: report.filename, integrity: report.integrity,
     files,
-    checks: { help: true, daemon: true, pausedProfile: true, dependencyIsolation: true },
+    checks: { help: true, daemon: true, pausedProfile: true, dependencyIsolation: true, hostWorker: true },
   };
 }
 
@@ -147,7 +147,15 @@ async function consumer(prefix: string, temporary: string, env: NodeJS.ProcessEn
     }
   }
   const cli = (args: string[]) => command(bin, args, temporary, env, signal);
-  if (!(await cli(['--help'])).includes('resilient SSH-only')) invalid('Installed command help did not execute.');
+  const help = await cli(['--help']);
+  if (!help.startsWith('devtunnel-ctl - ') || !help.includes('host TUNNEL') || !help.includes('profile add NAME')) {
+    invalid('Installed command help is missing the expected host or client commands.');
+  }
+  const host = await cli(['--state-dir', join(temporary, 'host-state'), 'host', 'example.usw2',
+    '--helper', join(temporary, 'missing-host-helper')]);
+  if (!host.includes('"kind":"fault"') || !host.includes('"code":"invalid-config"') || host.includes('"state":"verified"')) {
+    invalid('Installed host worker did not report the expected terminal helper failure.');
+  }
   const state = join(temporary, 's');
   await cli(['--state-dir', state, 'init', '--helper', process.execPath]);
   const child = spawn(bin, ['--state-dir', state, 'daemon'], { cwd: temporary, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -229,7 +237,7 @@ async function check(output: string, expected: string | undefined, verifyOnly: b
     await consumer(prefix, temporary, env, signal, pkg);
     if (await integrity(tarball) !== hash) invalid('Artifact changed during verification.');
     const report: Report = { ...pkg, filename, integrity: hash, files,
-      checks: { help: true, daemon: true, pausedProfile: true, dependencyIsolation: true } };
+      checks: { help: true, daemon: true, pausedProfile: true, dependencyIsolation: true, hostWorker: true } };
     await writeFile(join(output, 'result.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
     return report;
   } finally { await rm(temporary, { recursive: true, force: true }); }
