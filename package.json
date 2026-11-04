@@ -1,6 +1,6 @@
 {
   "name": "@jonathanyee/devtunnel-ctl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Resilient hosting and SSH forwarding using the Microsoft Dev Tunnels SDK",
   "license": "MIT",
   "author": "jonyee",
