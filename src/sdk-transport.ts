@@ -8,6 +8,7 @@ import { Agent } from 'node:https';
 import type { Duplex } from 'node:stream';
 import type { Profile } from './config.ts';
 import { TokenProvider } from './auth.ts';
+import type { TokenScope } from './auth.ts';
 import { bounded, Fault, safeFault } from './core.ts';
 
 export interface TransportEvent {
@@ -24,7 +25,7 @@ export interface Transport {
   connect(profile: Profile, signal: AbortSignal, event: (event: TransportEvent) => void): Promise<Session>;
 }
 
-async function sdkCall<T>(signal: AbortSignal, action: (cancellation: CancellationToken) => Promise<T>): Promise<T> {
+export async function sdkCall<T>(signal: AbortSignal, action: (cancellation: CancellationToken) => Promise<T>): Promise<T> {
   const source = new CancellationTokenSource();
   const abort = () => source.cancel();
   signal.addEventListener('abort', abort, { once: true });
@@ -33,7 +34,7 @@ async function sdkCall<T>(signal: AbortSignal, action: (cancellation: Cancellati
   finally { signal.removeEventListener('abort', abort); source.dispose(); }
 }
 
-async function sdkRefresh<T>(signal: AbortSignal, cancellation: CancellationToken | undefined,
+export async function sdkRefresh<T>(signal: AbortSignal, cancellation: CancellationToken | undefined,
   timeoutMs: number, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   const subscription = cancellation?.onCancellationRequested(() => controller.abort());
@@ -43,10 +44,11 @@ async function sdkRefresh<T>(signal: AbortSignal, cancellation: CancellationToke
 }
 
 export async function resolveTunnel(
-  profile: Profile, tokens: TokenProvider, management: TunnelManagementHttpClient, signal: AbortSignal,
+  profile: Pick<Profile, 'tunnelId' | 'clusterId'>, tokens: TokenProvider, management: TunnelManagementHttpClient, signal: AbortSignal,
+  scope: TokenScope = 'connect',
 ): Promise<Tunnel> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const token = await tokens.get(profile, signal, attempt > 0);
+    const token = await tokens.get(profile, signal, attempt > 0, scope);
     const clusterId = profile.clusterId ?? token.clusterId;
     if (!clusterId) throw new Fault('invalid-config', 'Specify --cluster: the token has no SDK routing hint.');
     try {
@@ -55,7 +57,7 @@ export async function resolveTunnel(
         { accessToken: token.value, includePorts: true, followRedirects: true }, cancellation,
       )), 8000, signal);
       if (!tunnel) throw new Fault('remote-unavailable');
-      return { ...tunnel, accessTokens: { connect: token.value } };
+      return { ...tunnel, accessTokens: { [scope]: token.value } };
     } catch (error) {
       const fault = safeFault(error);
       if (fault.code === 'login-required' && attempt === 0) continue;

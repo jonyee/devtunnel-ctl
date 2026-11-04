@@ -8,10 +8,16 @@ import { request } from './rpc.ts';
 import { Daemon } from './daemon.ts';
 import { DaemonLock } from './lock.ts';
 import { service } from './launchd.ts';
+import { validateHost } from './host.ts';
+import { runHost } from './host-process.ts';
+import { hostService, serveHost } from './host-service.ts';
 
-export const help = `devtunnel-ctl - resilient SSH-only Dev Tunnels forwarding
+export const help = `devtunnel-ctl - resilient Dev Tunnels hosting and SSH forwarding
 
   init [--helper /absolute/path/devtunnel]
+  host TUNNEL[.CLUSTER] [--helper /absolute/path/devtunnel] [--cluster ID] [--probe-port PORT ...]
+  host-service install|start|stop|uninstall|status TUNNEL [--cluster ID]
+    install also accepts --helper and repeatable --probe-port (macOS only)
   daemon                         Foreground service; Ctrl-C stops it
   profile add NAME --tunnel ID[.CLUSTER] --local PORT [--remote 22] [--cluster ID] [--paused]
   profile list | status [NAME] [--json]
@@ -23,12 +29,16 @@ export const help = `devtunnel-ctl - resilient SSH-only Dev Tunnels forwarding
 Global: --state-dir /absolute/private/directory, --help
 State defaults to ~/.devtunnel-ctl. Start a daemon before modifying profiles.
 Reconnect never unpauses. Stable ports never shift. Fresh clients may break SSH sessions.
+Host preserves all configured ports. Probes check only explicitly selected ports.
+Starting a host may displace another host. Replacement disconnects active clients.
+Windows supports foreground host only; pass --helper with an absolute devtunnel.exe path.
 `;
 
 function argumentsFor(args: string[]) {
   try { return parseArgs({ args, allowPositionals: true, strict: true, options: {
     'state-dir': { type: 'string' }, helper: { type: 'string' }, tunnel: { type: 'string' },
     local: { type: 'string' }, remote: { type: 'string' }, cluster: { type: 'string' },
+    'probe-port': { type: 'string', multiple: true },
     paused: { type: 'boolean' }, json: { type: 'boolean' }, follow: { type: 'boolean' },
     'device-code': { type: 'boolean' }, github: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   } }); }
@@ -43,10 +53,35 @@ export async function cli(args: string[], entry: string): Promise<void> {
   const allowed: Record<string, string[]> = {
     init: ['helper'], daemon: [], profile: sub === 'add' ? ['tunnel', 'local', 'remote', 'cluster', 'paused'] : ['json'],
     status: ['json'], pause: [], resume: [], reconnect: [], logs: ['follow'], login: ['device-code', 'github'], service: [],
+    host: ['helper', 'cluster', 'probe-port'],
+    'host-service': sub === 'install' ? ['helper', 'cluster', 'probe-port'] : ['cluster'],
   };
   if (!command || !(command in allowed) || Object.keys(flags).some(k => k !== 'state-dir' && !allowed[command]!.includes(k))) {
     throw new Fault('invalid-config', 'Unknown command or misplaced option. Run devtunnel-ctl --help.');
   }
+  if (command === 'host' || command === 'host-service') {
+    const actions = ['install', 'start', 'stop', 'uninstall', 'status'];
+    const tunnelId = command === 'host' ? sub : name;
+    if (!tunnelId || words.length !== (command === 'host' ? 2 : 3) ||
+        (command === 'host-service' && !actions.includes(sub ?? ''))) throw new Fault('invalid-config', 'Use host TUNNEL or host-service ACTION TUNNEL.');
+    if (process.platform === 'win32' && (command !== 'host' || flags['state-dir'])) {
+      throw new Fault('invalid-config', 'Windows supports foreground host only, without --state-dir. Pass an absolute --helper path.');
+    }
+    const store = new Store(stateDir(flags['state-dir']));
+    const helperPath = flags.helper ?? (process.platform === 'win32' ? undefined : (await store.load()).helperPath);
+    if (!helperPath) throw new Fault('invalid-config', 'Specify --helper with the absolute path to devtunnel.exe.');
+    const options = validateHost({ tunnelId, clusterId: flags.cluster, helperPath,
+      probePorts: (flags['probe-port'] ?? []).map(Number) });
+    if (command === 'host-service') {
+      console.log(JSON.stringify(await hostService(sub!, options, store.dir, entry)));
+      return;
+    }
+    console.error('Hosting may displace another host. Recovery replacements can disconnect existing clients.');
+    if (process.platform === 'win32') await runHost(options, message => console.log(JSON.stringify(message)));
+    else await serveHost(options, store.dir);
+    return;
+  }
+  if (process.platform === 'win32') throw new Fault('invalid-config', 'Windows supports foreground host only. Client daemon and service commands require macOS or Linux.');
   const store = new Store(stateDir(flags['state-dir']));
   await store.init();
   const socket = join(store.dir, 'control.sock');

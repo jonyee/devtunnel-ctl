@@ -1,6 +1,6 @@
 export type FaultCode = 'login-required' | 'access-denied' | 'port-conflict' |
   'remote-unavailable' | 'retrying' | 'throttled' | 'timeout' | 'aborted' |
-  'invalid-config' | 'protocol' | 'daemon-unavailable' | 'internal';
+  'invalid-config' | 'protocol' | 'daemon-unavailable' | 'internal' | 'host-superseded' | 'host-cleanup-failed';
 
 const messages: Record<FaultCode, string> = {
   'login-required': 'Sign-in required. Run devtunnel-ctl login, then reconnect.',
@@ -15,6 +15,8 @@ const messages: Record<FaultCode, string> = {
   protocol: 'Invalid or oversized control message.',
   'daemon-unavailable': 'Daemon unavailable. Run devtunnel-ctl daemon or start the installed service.',
   internal: 'Operation failed. Check configuration and sanitized service logs.',
+  'host-superseded': 'Another host took over this tunnel. Automatic hosting stopped to avoid reconnect contention.',
+  'host-cleanup-failed': 'Owned host endpoint cleanup failed. Automatic hosting stopped; inspect this tunnel before starting another host.',
 };
 
 export class Fault extends Error {

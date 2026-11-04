@@ -53,6 +53,26 @@ test('token helper uses argv, coalesces acquisition, and refreshes only in memor
   await provider.get(p); assert.equal(calls, 3);
 });
 
+test('host and connect token caches and flights are isolated by scope', async () => {
+  const scopes: string[] = [];
+  const provider = new TokenProvider('/unused', async (_path, args) => {
+    assert.equal(args[1], 'example.usw2');
+    scopes.push(args[3]!);
+    return JSON.stringify({ token: token() });
+  });
+  const ref = { tunnelId: 'example', clusterId: 'usw2' };
+  await Promise.all([provider.get(ref), provider.get(ref, undefined, false, 'host')]);
+  assert.deepEqual(scopes.sort(), ['connect', 'host']);
+  await provider.get(ref, undefined, true, 'host');
+  await provider.get(ref);
+  assert.equal(scopes.length, 3);
+  assert.equal(scopes[2], 'host');
+  provider.invalidate(ref, 'host');
+  await provider.get(ref, undefined, false, 'host');
+  await provider.get(ref);
+  assert.equal(scopes.length, 4);
+});
+
 test('cancelling one coalesced token waiter does not abort the remaining waiter', async () => {
   let release!: (output: string) => void, aborted = false;
   const provider = new TokenProvider('/unused', async (_path, _args, signal) =>

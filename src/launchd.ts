@@ -10,7 +10,7 @@ import { request } from './rpc.ts';
 import { executable } from './paths.ts';
 
 interface AgentPaths { label: string; node: string; entry: string; state: string }
-const xml = (value: string) => value.replace(/[<>&"']/g, ch =>
+export const xml = (value: string) => value.replace(/[<>&"']/g, ch =>
   ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[ch]!);
 export function launchAgent(paths: AgentPaths): string {
   if (![paths.node, paths.entry, paths.state].every(p => isAbsolute(p) && !/[\0\r\n]/.test(p))) {
@@ -31,18 +31,21 @@ export function launchAgent(paths: AgentPaths): string {
 `;
 }
 
-async function launchctl(args: string[], allowAbsent = false): Promise<{ loaded: boolean }> {
+export async function launchctl(args: string[], allowAbsent = false): Promise<{ loaded: boolean; pid?: number }> {
   return bounded(signal => new Promise((resolve, reject) => {
     const child = spawn('/bin/launchctl', args, { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
-    let bytes = 0;
+    let bytes = 0, stdout = '';
     const abort = () => { child.kill('SIGKILL'); };
     signal.addEventListener('abort', abort, { once: true });
-    child.stdout.on('data', b => { bytes += b.length; if (bytes > 65536) abort(); });
+    child.stdout.on('data', b => { bytes += b.length; if (bytes > 65536) abort(); else stdout += b.toString(); });
     child.stderr.on('data', b => { bytes += b.length; if (bytes > 65536) abort(); });
     child.on('error', () => { signal.removeEventListener('abort', abort); reject(new Fault('internal', 'Cannot execute launchctl.')); });
     child.on('close', code => {
       signal.removeEventListener('abort', abort);
-      if (code === 0) resolve({ loaded: true });
+      if (code === 0) {
+        const pid = /^\s*pid = ([1-9][0-9]*)\s*$/m.exec(stdout)?.[1];
+        resolve({ loaded: true, ...(pid ? { pid: Number(pid) } : {}) });
+      }
       else if (allowAbsent && code === 113) resolve({ loaded: false });
       else reject(new Fault('internal', 'launchctl failed. Check the service registration with launchctl print gui/$(id -u)/LABEL; no persistent action is assumed successful.'));
     });

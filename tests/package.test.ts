@@ -38,7 +38,7 @@ test('publishable metadata keeps the command name and targets the owned public n
   assert.deepEqual(pkg.bin, { 'devtunnel-ctl': 'dist/main.js' });
   assert.deepEqual(pkg.files, ['dist', 'npm-shrinkwrap.json']);
   assert.equal(pkg.engines.node, '>=24');
-  assert.deepEqual(pkg.os, ['darwin', 'linux']);
+  assert.deepEqual(pkg.os, ['darwin', 'linux', 'win32']);
   assert.deepEqual(pkg.publishConfig, { access: 'public', registry: 'https://registry.npmjs.org/' });
   assert.equal(pkg.repository.url, 'git+https://github.com/jonyee/devtunnel-ctl.git');
   assert.equal(pkg.scripts.prepack, 'npm run build');
@@ -114,8 +114,10 @@ test('the actual packed CLI installs independently from an empty cache and detec
     assert.equal(report.checks.daemon, true);
     assert.equal(report.checks.pausedProfile, true);
     assert.equal(report.checks.dependencyIsolation, true);
+    assert.equal(report.checks.hostWorker, true);
     assert.ok(report.files.includes('dist/main.js'));
     assert.ok(report.files.includes('dist/cli.js'));
+    assert.ok(report.files.includes('dist/host-worker.js'));
     assert.ok(report.files.includes('LICENSE'));
     assert.ok(report.files.includes('npm-shrinkwrap.json'));
     assert.equal(report.files.some((path: string) => /^(src|tests|scripts|node_modules|\.github)\//.test(path)), false);

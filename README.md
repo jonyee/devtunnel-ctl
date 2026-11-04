@@ -1,12 +1,12 @@
 # devtunnel-ctl
 
-A per-user background service and CLI for **SSH-only** Microsoft Dev Tunnels forwarding. It uses the Microsoft TypeScript SDK directly, owns stable loopback ports, checks real SSH banners, and replaces stale SDK connections when bounded resumable recovery fails.
+A per-user service and CLI for resilient Microsoft Dev Tunnels hosting and **SSH-only client forwarding**. Both use the Microsoft TypeScript SDK. Client forwarding owns stable loopback ports, checks real SSH banners, and replaces stale SDK connections when bounded resumable recovery fails.
 
 This is a first version, not a transparent SSH-session migration tool. A fresh SDK client can terminate existing SSH sessions. Use `tmux` on the remote machine when session continuity matters. No remote settings or SSH configuration are modified.
 
 ## Installation
 
-Requires Node.js 24 or later, npm, macOS or Linux, and an installed Microsoft `devtunnel` CLI. The authentication helper is not bundled. On macOS/Homebrew its default path is `/opt/homebrew/bin/devtunnel`; on Linux pass its actual absolute path to `init --helper`. The local daemon does not support Windows, but can connect to remote SSH endpoints running inside WSL.
+Requires Node.js 24 or later, npm, and an installed Microsoft `devtunnel` CLI. Client forwarding supports macOS and Linux, including WSL. Foreground hosting also supports native Windows. The authentication helper is not bundled. On macOS/Homebrew its default path is `/opt/homebrew/bin/devtunnel`; on Linux pass its actual absolute path to `init --helper`. On Windows, pass an absolute `--helper` path to `devtunnel.exe` when hosting. The client daemon and its control commands remain unsupported on Windows.
 
 ### From npm
 
@@ -60,7 +60,52 @@ export PATH="$HOME/.local/bin:$PATH"
 
 This local installation remains tied to the checkout. Otherwise use `node /absolute/path/to/devtunnel-ctl/dist/main.js` throughout.
 
-## Profiles and commands
+## Host an existing tunnel
+
+Replace an existing `devtunnel host host-name` invocation with:
+
+```sh
+devtunnel-ctl host host-name --probe-port 22
+# Select the installed authentication helper explicitly if needed:
+devtunnel-ctl host host-name --helper /absolute/path/devtunnel \
+  --probe-port 22 --probe-port 3000
+```
+
+On native Windows:
+
+```powershell
+devtunnel-ctl host host-name --helper 'C:\Tools\devtunnel.exe' --probe-port 22
+```
+
+Hosting preserves **all ports already configured on the tunnel**, not just SSH or the selected probe ports. It does not create tunnels, change access policies, or enable anonymous access. Existing port changes are refreshed periodically; removing a port stops new forwarded connections on that port. Sign in explicitly with the selected helper's `user login` command before hosting.
+
+**Starting a host may displace an existing host for that tunnel.** Stop or migrate the old host deliberately. A displaced supervised host reports `host-superseded` and stops rather than repeatedly taking the tunnel back. Recovery can disconnect active clients on every hosted port.
+
+The foreground command owns a disposable SDK worker. It retries unexpected worker exit, lost heartbeats, relay failures and persistent forwarding failures with jittered backoff capped at 15 seconds. Relay WebSocket keepalives send a ping after 10 seconds without incoming traffic and allow 10 seconds for a response, even without probes. An established relay gets up to eight seconds for resumable reconnect before replacement. Service Retry-After delays take precedence. Operations and shutdown have deadlines; a replacement cannot overlap a worker whose exit is unconfirmed.
+
+`--probe-port` is optional, repeatable, and limited to 16 distinct configured ports. Each check compares direct local TCP connectivity with an independent authenticated connection through the tunnel. Consecutive forwarding failures can replace the host after a 30-second startup cooldown. An unavailable local application does not trigger host-restart loops. Probes need connect permission in addition to the host permission required for hosting.
+
+Output is sanitized JSON. The command reports relay connectivity before checking probe ports. `connected` means the relay is connected; `verified` means every selected TCP probe passed; `degraded` reports local-service or probe failures. `localUnavailable`, `verifiedPorts`, and `probeFault` distinguish those conditions. Without explicit probes, the command never reports `verified`. A TCP connection check does not establish application correctness.
+
+Sign-in rejection, permission denial, invalid configuration, takeover by another host and failed owned-endpoint cleanup stop automatic hosting. Fix the reported condition, then explicitly restart. Terminal host faults appear as `fault` output and a successful supervisor exit, which prevents launchd from restarting them. A cleanup failure during explicit shutdown still emits `host-cleanup-failed`. Do not interpret exit code zero alone as proof of healthy hosting.
+
+Restart a loaded macOS job with `host-service stop TUNNEL` followed by `host-service start TUNNEL`.
+
+Foreground mode works on macOS, Linux/WSL and Windows. On macOS, install a separate per-tunnel login service:
+
+```sh
+devtunnel-ctl host-service install host-name --probe-port 22
+devtunnel-ctl host-service start host-name
+devtunnel-ctl host-service status host-name
+devtunnel-ctl host-service stop host-name
+devtunnel-ctl host-service uninstall host-name
+```
+
+Install accepts `--helper`, `--cluster` and repeated `--probe-port` options, and **does not start hosting**. Use the same tunnel, cluster and global `--state-dir` when addressing the job. Installation pins absolute runtime, entrypoint and helper paths. Stop/uninstall/reinstall to change those paths or probe settings. Host jobs do not share the client daemon or its configuration.
+
+On macOS and Linux, each tunnel keeps private bounded logs and status under `STATE/hosts/IDENTITY/`. `host-service status` distinguishes launchd registration from a fresh status snapshot belonging to its current PID. A stopped job's historical status is not a responsive host. Uninstall retains logs and status. Windows foreground mode writes no POSIX state and rejects `--state-dir`; Linux and Windows service installation are not supported.
+
+## Client profiles and commands
 
 Each profile maps one remote SSH port to one fixed local port. Both `127.0.0.1:PORT` and `[::1]:PORT` are bound exclusively; there is no LAN listener and no automatic port shifting. A conflict on either address fails that profile explicitly. An IPv6-disabled environment must enable IPv6 loopback before using this version.
 
@@ -88,7 +133,7 @@ Existing aliases remain unchanged when the same local port is assigned to a prof
 
 ## Authentication
 
-The SDK performs connection and forwarding work. The Microsoft CLI is used **only** for explicit sign-in and acquiring short-lived, connect-scoped tunnel tokens:
+The SDK performs hosting, connection and forwarding work. The Microsoft CLI is used **only** for explicit sign-in and acquiring short-lived tunnel tokens. Client forwarding requests connect scope; hosting requests host scope and its optional independent probes request connect scope. Scope-specific caches and in-flight acquisitions stay separate:
 
 ```sh
 devtunnel-ctl login
@@ -106,7 +151,7 @@ The parser accepts a JSON string containing a JWT or an object with a `token` JW
 
 Specify the cluster explicitly (`ID.CLUSTER` or `--cluster`) for predictable routing. For an unqualified ID, the currently issued token's validated-format `clusterId` claim is used only as a routing hint, not as proof of authorization. If that hint is absent, status requests an explicit cluster rather than guessing. TLS and SDK host-key checks remain enabled; endpoint metadata without published host public keys is rejected, including during refresh. The SDK's default E2E encryption request is preserved.
 
-## Recovery policy
+## Client recovery policy
 
 | Signal or condition | Behavior |
 | --- | --- |
@@ -211,6 +256,8 @@ npm test
 
 Tests use Node's built-in runner and type stripping. They cover private configuration and helper handling, actual dual-loopback binds/conflicts, forwarding backpressure and half-close, queued-write draining after remote EOF, abrupt remote closure, SSH banners, fake-clock recovery/deadlines/long gaps, stale async completions, authentication/endpoint refresh, redaction/rotation, malformed and oversized IPC, concurrent daemon locking, and real CLI/daemon subprocess restart flows. Large-response assertions compare byte counts and equality without rendering multi-megabyte buffer diffs. All verification daemons are isolated and shut down by their tests.
 
+Host tests additionally exercise scope separation, worker crashes and forced shutdown, missing heartbeats, takeover stops, probe/local-service classification, owned-endpoint cleanup and macOS host-job generation. Windows CI runs the portable host tests separately from POSIX daemon tests. These checks do not establish live host recovery or install/start a real service.
+
 ## Package verification and publishing
 
 The npm package is `@jonathanyee/devtunnel-ctl`; the installed command remains `devtunnel-ctl`. The project is MIT-licensed; see [LICENSE](LICENSE).
@@ -229,7 +276,7 @@ npm run package:check -- --verify-only --expected-version 0.1.0
 
 - Allows only `dist`, package metadata, README, license and `npm-shrinkwrap.json`; it rejects source, tests, scripts, workflows and unexpected files.
 - Installs the tarball into an isolated temporary global prefix, without development dependencies, credentials or installation scripts.
-- Runs the installed command outside the checkout, verifies its runtime dependencies are inside that prefix, and exercises an isolated daemon/status/paused-profile flow without connecting to real tunnels.
+- Runs the installed command outside the checkout, verifies its runtime dependencies are inside that prefix, exercises an isolated daemon/status/paused-profile flow, and checks host-worker dispatch with a deliberately missing helper. These checks do not connect to real tunnels.
 - Stops that daemon and removes temporary installation/state directories.
 - Writes the checked tarball and `result.json` under ignored `.artifacts/`. The result includes SHA-512 integrity; `--verify-only` rejects incomplete reports or modified artifacts.
 

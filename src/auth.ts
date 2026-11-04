@@ -67,6 +67,7 @@ export function runHelper(path: string, args: string[], signal?: AbortSignal, ti
 
 type Runner = (path: string, args: string[], signal?: AbortSignal) => Promise<string>;
 type Reference = { tunnelId: string; clusterId?: string };
+export type TokenScope = 'connect' | 'host';
 interface Flight { promise: Promise<Token>; controller: AbortController; users: number }
 export class TokenProvider {
   private readonly cache = new Map<string, Token>();
@@ -74,8 +75,9 @@ export class TokenProvider {
   readonly path: string;
   private readonly runner: Runner;
   constructor(path: string, runner: Runner = runHelper) { this.path = path; this.runner = runner; }
-  async get(ref: Reference, signal?: AbortSignal, refresh = false): Promise<Token> {
-    const key = ref.tunnelId + (ref.clusterId ? `.${ref.clusterId}` : '');
+  async get(ref: Reference, signal?: AbortSignal, refresh = false, scope: TokenScope = 'connect'): Promise<Token> {
+    const tunnel = ref.tunnelId + (ref.clusterId ? `.${ref.clusterId}` : '');
+    const key = `${scope}:${tunnel}`;
     if (signal?.aborted) throw new Fault('aborted');
     if (refresh) this.cache.delete(key);
     const cached = this.cache.get(key);
@@ -84,7 +86,7 @@ export class TokenProvider {
     if (flight?.controller.signal.aborted) { this.flights.delete(key); flight = undefined; }
     if (!flight) {
       const controller = new AbortController();
-      const promise = this.runner(this.path, ['token', key, '--scopes', 'connect', '--json'], controller.signal)
+      const promise = this.runner(this.path, ['token', tunnel, '--scopes', scope, '--json'], controller.signal)
         .then(output => {
           if (controller.signal.aborted) throw new Fault('aborted');
           const token = parseToken(output);
@@ -105,8 +107,8 @@ export class TokenProvider {
     for (const flight of this.flights.values()) flight.controller.abort();
     this.flights.clear();
   }
-  invalidate(ref: Reference): void {
-    const key = ref.tunnelId + (ref.clusterId ? `.${ref.clusterId}` : '');
+  invalidate(ref: Reference, scope: TokenScope = 'connect'): void {
+    const key = `${scope}:${ref.tunnelId}${ref.clusterId ? `.${ref.clusterId}` : ''}`;
     this.cache.delete(key);
   }
 }
